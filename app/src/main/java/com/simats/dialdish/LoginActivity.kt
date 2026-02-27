@@ -53,8 +53,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.simats.dialdish.network.* // Connects your network files
-import com.simats.dialdish.ui.theme.DialDishTheme
+import com.simats.dialdish.network.* import com.simats.dialdish.ui.theme.DialDishTheme
 import kotlinx.coroutines.launch
 
 class LoginActivity : ComponentActivity() {
@@ -115,8 +114,8 @@ fun LoginScreen(modifier: Modifier = Modifier) {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth(),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,   // Adapts to Dark/Light mode!
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface, // Adapts to Dark/Light mode!
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = Color.Transparent
                 ),
@@ -145,8 +144,8 @@ fun LoginScreen(modifier: Modifier = Modifier) {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth(),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,   // Adapts to Dark/Light mode!
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface, // Adapts to Dark/Light mode!
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = Color.Transparent
                 ),
@@ -155,13 +154,10 @@ fun LoginScreen(modifier: Modifier = Modifier) {
         }
 
         Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        Text(
-            text = "Forgot Password?", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-            modifier = Modifier.align(Alignment.End).clickable { /* TODO */ }.padding(vertical = 8.dp)
-        )
 
-        Spacer(modifier = Modifier.height(24.dp))
 
         // --- LOGIN BUTTON WITH NETWORK LOGIC ---
         Button(
@@ -176,21 +172,29 @@ fun LoginScreen(modifier: Modifier = Modifier) {
                         val request = LoginRequest(email, password)
                         val response = RetrofitClient.instance.loginUser(request)
 
+                        // In LoginActivity.kt, update the SharedPreferences block:
                         if (response.isSuccessful && response.body()?.status == "success") {
+                            val body = response.body()
                             val sharedPrefs = context.getSharedPreferences("DialDishPrefs", Context.MODE_PRIVATE)
-                            sharedPrefs.edit().putString("LOGGED_IN_USER_ID", response.body()?.userId).apply()
-                            val role = response.body()?.role
-                            Toast.makeText(context, "Welcome ${response.body()?.name}!", Toast.LENGTH_SHORT).show()
 
-                            // ROUTING LOGIC BASED ON ROLE
-                            val intent = when (role) {
+                            // NEW: Ensure your ApiModels.kt LoginResponse has `val is_open: Boolean?`
+                            sharedPrefs.edit()
+                                .putString("LOGGED_IN_USER_ID", body?.userId)
+                                .putString("LOGGED_IN_USER_NAME", body?.name)
+                                .putString("USER_ROLE", body?.role)
+                                .putInt("OWNER_STALL_ID", body?.stall_id ?: -1)
+                                .putInt("DELIVERY_STAFF_ID", body?.staff_id ?: -1)
+                                .putBoolean("IS_STORE_OPEN", body?.is_open ?: false) // <--- ADD THIS LINE
+                                .apply()
+
+                            Toast.makeText(context, "Welcome ${body?.name}!", Toast.LENGTH_SHORT).show()
+
+                            val intent = when (body?.role) {
                                 "Owner" -> Intent(context, com.simats.dialdish.owner.OHomeActivity::class.java)
-                                "Delivery" -> Intent(context, Class.forName("com.simats.dialdish.DeliveryHomeActivity"))
-                                else -> Intent(context, Class.forName("com.simats.dialdish.UserHomeActivity"))
+                                "Delivery" -> Intent(context, com.simats.dialdish.delivery.DHomeActivity::class.java)
+                                else -> Intent(context, com.simats.dialdish.user.UHomeActivity::class.java)
                             }
 
-                            // This clears the backstack so they can't hit "Back" to go to the login screen
-// This clears the backstack so they can't hit "Back" to go to the login screen
                             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                             val options = android.app.ActivityOptions.makeCustomAnimation(context, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
                             context.startActivity(intent, options)

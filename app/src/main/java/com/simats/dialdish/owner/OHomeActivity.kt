@@ -1,7 +1,9 @@
 package com.simats.dialdish.owner
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -14,7 +16,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,7 +26,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.simats.dialdish.network.DashboardStatsRequest
+import com.simats.dialdish.network.RetrofitClient
+import com.simats.dialdish.network.StoreStatusRequest
 import com.simats.dialdish.ui.theme.DialDishTheme
+import kotlinx.coroutines.launch
+import java.util.Calendar
 
 class OHomeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +55,76 @@ class OHomeActivity : ComponentActivity() {
 @Composable
 fun OHomeDashboard(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val sharedPrefs = context.getSharedPreferences("DialDishPrefs", Context.MODE_PRIVATE)
+
+    val ownerName = sharedPrefs.getString("LOGGED_IN_USER_NAME", "Partner") ?: "Partner"
+    val stallId = sharedPrefs.getInt("OWNER_STALL_ID", -1)
+
+    val initialOpenState = sharedPrefs.getBoolean("IS_STORE_OPEN", false)
+    var isAcceptingOrders by remember { mutableStateOf(initialOpenState) }
+
+    // LIVE STATS STATE
+    var approvedCount by remember { mutableIntStateOf(0) }
+    var rejectedCount by remember { mutableIntStateOf(0) }
+
+    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    val greeting = when (hour) {
+        in 0..11 -> "Good Morning,"
+        in 12..15 -> "Good Afternoon,"
+        in 16..19 -> "Good Evening,"
+        else -> "Good Night,"
+    }
+
+    // AUTO-REFRESH LOGIC: Triggers every time the screen comes into view (ON_RESUME)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (stallId != -1) {
+                    coroutineScope.launch {
+                        try {
+                            val response = RetrofitClient.instance.getDashboardStats(DashboardStatsRequest(stallId))
+                            if (response.isSuccessful && response.body()?.status == "success") {
+                                approvedCount = response.body()?.approved_today ?: 0
+                                rejectedCount = response.body()?.rejected_today ?: 0
+                            }
+                        } catch (e: Exception) {
+                            // Silently ignore network failures on auto-refresh
+                        }
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    fun toggleStoreStatus(isOpen: Boolean) {
+        if (stallId == -1) {
+            Toast.makeText(context, "Error: Stall ID not found. Please log out and log in again.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        isAcceptingOrders = isOpen
+        coroutineScope.launch {
+            try {
+                val response = RetrofitClient.instance.updateStoreStatus(StoreStatusRequest(stallId, isOpen))
+                if (response.isSuccessful && response.body()?.status == "success") {
+                    sharedPrefs.edit().putBoolean("IS_STORE_OPEN", isOpen).apply()
+                    Toast.makeText(context, if (isOpen) "Store is now LIVE!" else "Store Closed.", Toast.LENGTH_SHORT).show()
+                } else {
+                    isAcceptingOrders = !isOpen
+                    Toast.makeText(context, "Failed to update status", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                isAcceptingOrders = !isOpen
+                Toast.makeText(context, "Network Error", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -53,54 +133,74 @@ fun OHomeDashboard(modifier: Modifier = Modifier) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // TOP HEADER WITH SETTINGS ICON
         item {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = "Dashboard", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
-
-                // Settings Icon Button
-// Settings Icon Button
+                Column {
+                    Text(text = greeting, fontSize = 16.sp, color = Color.Gray)
+                    Text(text = "$ownerName! 👋", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
+                }
                 IconButton(onClick = {
-                    val intent = android.content.Intent(context, OSettingsActivity::class.java)
-                    val options = android.app.ActivityOptions.makeCustomAnimation(context, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
-                    context.startActivity(intent, options)
+                    val intent = Intent(context, OSettingsActivity::class.java)
+                    context.startActivity(intent)
                 }) {
                     Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                 }
             }
         }
 
-        // FEATURE 1: Today's Approved & Rejected Orders (Will fetch CURDATE() from PHP)
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(text = "Accepting Orders", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                    Text(
+                        text = if (isAcceptingOrders) "Store is Open 🟢" else "Store is Closed 🔴",
+                        fontSize = 14.sp,
+                        color = if (isAcceptingOrders) Color(0xFF4CAF50) else Color.Red
+                    )
+                }
+                Switch(
+                    checked = isAcceptingOrders,
+                    onCheckedChange = { toggleStoreStatus(it) }
+                )
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).background(Color(0xFF4CAF50).copy(alpha = 0.1f)).padding(16.dp)) {
                     Column {
                         Text("Approved Today", fontSize = 14.sp, color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
-                        Text("24", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
+                        // LIVE DATA INSERTED HERE
+                        Text("$approvedCount", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
                     }
                 }
                 Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).background(Color(0xFFF44336).copy(alpha = 0.1f)).padding(16.dp)) {
                     Column {
                         Text("Rejected Today", fontSize = 14.sp, color = Color(0xFFF44336), fontWeight = FontWeight.Bold)
-                        Text("3", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
+                        // LIVE DATA INSERTED HERE
+                        Text("$rejectedCount", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
                     }
                 }
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
 
-        // FEATURE 2: Add Delivery Man Button
         item {
             Button(
-                onClick = {
-                    val intent = Intent(context, OAddDeliveryManActivity::class.java)
-                    val options = android.app.ActivityOptions.makeCustomAnimation(context, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
-                    context.startActivity(intent, options)
-                },
+                onClick = { context.startActivity(Intent(context, OAddDeliveryManActivity::class.java)) },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
@@ -112,14 +212,9 @@ fun OHomeDashboard(modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // NEW FEATURE: Manage Staff & EOD Settlements Button
         item {
             OutlinedButton(
-                onClick = {
-                    val intent = Intent(context, OManageStaffActivity::class.java)
-                    val options = android.app.ActivityOptions.makeCustomAnimation(context, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
-                    context.startActivity(intent, options)
-                },
+                onClick = { context.startActivity(Intent(context, OManageStaffActivity::class.java)) },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(16.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
@@ -131,50 +226,9 @@ fun OHomeDashboard(modifier: Modifier = Modifier) {
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
-
-        // FEATURE 3: List of Free and Working Delivery Personnel
-        item {
-            Text(text = "Live Delivery Staff Status", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.fillMaxWidth())
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        // Delivery Personnel List
-        item { DeliveryStaffCard(name = "Ramesh Kumar", status = "Free", id = "AD3214") }
-        item { DeliveryStaffCard(name = "Suresh Singh", status = "Working", id = "AD3215") }
-    }
-}
-
-@Composable
-fun DeliveryStaffCard(name: String, status: String, id: String) {
-    val isFree = status == "Free"
-    val statusColor = if (isFree) Color(0xFF4CAF50) else Color(0xFFFF9800)
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column {
-            Text(text = name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            Text(text = "ID: $id", fontSize = 12.sp, color = Color.Gray)
-        }
-        Box(
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(statusColor.copy(alpha = 0.2f)).padding(horizontal = 12.dp, vertical = 6.dp)
-        ) {
-            Text(text = status, color = statusColor, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-        }
     }
 }
 
 @Preview(showBackground = true)
 @Composable
-fun OHomeDashboardPreview() {
-    DialDishTheme {
-        OHomeDashboard()
-    }
-}
+fun OHomeDashboardPreview() { DialDishTheme { OHomeDashboard() } }

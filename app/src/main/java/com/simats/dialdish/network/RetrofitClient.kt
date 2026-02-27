@@ -4,7 +4,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 object RetrofitClient {
-    private const val BASE_URL = "http://10.190.195.125:5000/"
+     const val BASE_URL = "http://10.190.195.125:5000/"
 
     val instance: DialDishApi by lazy {
         Retrofit.Builder()

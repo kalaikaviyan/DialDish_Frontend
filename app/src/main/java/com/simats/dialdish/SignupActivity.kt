@@ -1,6 +1,10 @@
 package com.simats.dialdish
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -21,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -28,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
@@ -65,7 +71,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.simats.dialdish.network.* import com.simats.dialdish.ui.theme.DialDishTheme
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
+import com.simats.dialdish.map.OSMMapPickerActivity
+import com.simats.dialdish.network.*
+import com.simats.dialdish.ui.theme.DialDishTheme
 import kotlinx.coroutines.launch
 
 class SignupActivity : ComponentActivity() {
@@ -85,7 +95,6 @@ class SignupActivity : ComponentActivity() {
 @Composable
 fun SignupScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-
     val coroutineScope = rememberCoroutineScope()
 
     var fullName by remember { mutableStateOf("") }
@@ -98,12 +107,63 @@ fun SignupScreen(modifier: Modifier = Modifier) {
     var fssaiNumber by remember { mutableStateOf("") }
     var stallImageUri by remember { mutableStateOf<Uri?>(null) }
 
+    // --- Location States ---
+    var latitude by remember { mutableStateOf<String?>(null) }
+    var longitude by remember { mutableStateOf<String?>(null) }
+    var locationMessage by remember { mutableStateOf("Set Stall Location 📍") }
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+
+    // UI Dialog States
+    var showLocationOptionsDialog by remember { mutableStateOf(false) }
+    var showManualLocationDialog by remember { mutableStateOf(false) }
+    var manualLat by remember { mutableStateOf("") }
+    var manualLon by remember { mutableStateOf("") }
+
+    // Launcher for Map Picker
+// Launcher for Map Picker
+    val mapPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            latitude = result.data?.getStringExtra("LATITUDE")
+            longitude = result.data?.getStringExtra("LONGITUDE")
+
+            // Format coordinates to 4 decimal places for a cleaner display
+            val latShort = latitude?.toDoubleOrNull()?.let { "%.4f".format(it) } ?: latitude
+            val lonShort = longitude?.toDoubleOrNull()?.let { "%.4f".format(it) } ?: longitude
+            locationMessage = "Map: $latShort, $lonShort ✅"
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            locationMessage = "Fetching GPS..."
+            @SuppressLint("MissingPermission")
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                if (location != null) {
+                    latitude = location.latitude.toString()
+                    longitude = location.longitude.toString()
+
+                    val latShort = "%.4f".format(location.latitude)
+                    val lonShort = "%.4f".format(location.longitude)
+                    locationMessage = "GPS: $latShort, $lonShort ✅"
+                    Toast.makeText(context, "Location Detected!", Toast.LENGTH_SHORT).show()
+                } else {
+                    locationMessage = "Failed. Please turn on GPS."
+                }
+            }
+        } else {
+            Toast.makeText(context, "Location permission is required.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? -> stallImageUri = uri }
 
     var selectedRole by remember { mutableStateOf("User") }
-
     var passwordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
 
@@ -119,29 +179,74 @@ fun SignupScreen(modifier: Modifier = Modifier) {
 
     fun validateBaseInputs(): Boolean {
         var isValid = true
-
-        if (!fullName.matches("^[a-zA-Z\\s]+$".toRegex())) {
-            fullNameError = "Only letters A-Z are allowed"; isValid = false
-        } else fullNameError = null
-
-        if (!email.matches("^[a-zA-Z0-9._%+-]+@(gmail\\.com|mail\\.com)$".toRegex())) {
-            emailError = "Must use @gmail.com or @mail.com"; isValid = false
-        } else emailError = null
-
-        if (!phone.matches("^\\d{10}$".toRegex())) {
-            phoneError = "Phone must be exactly 10 digits"; isValid = false
-        } else phoneError = null
-
+        if (!fullName.matches("^[a-zA-Z\\s]+$".toRegex())) { fullNameError = "Only letters A-Z are allowed"; isValid = false } else fullNameError = null
+        if (!email.matches("^[a-zA-Z0-9._%+-]+@(gmail\\.com|mail\\.com)$".toRegex())) { emailError = "Must use @gmail.com or @mail.com"; isValid = false } else emailError = null
+        if (!phone.matches("^\\d{10}$".toRegex())) { phoneError = "Phone must be exactly 10 digits"; isValid = false } else phoneError = null
         val passRegex = "^(?=.*[0-9])(?=.*[A-Z])(?=.*[@#\$%^&+=!_?-])(?=\\S+\$).{6,8}\$".toRegex()
-        if (!password.matches(passRegex)) {
-            passwordError = "6-8 chars: 1 Caps, 1 Num, 1 Special (@#$%), No spaces"; isValid = false
-        } else passwordError = null
-
-        if (password != confirmPassword || confirmPassword.isEmpty()) {
-            confirmPasswordError = "Passwords do not match"; isValid = false
-        } else confirmPasswordError = null
-
+        if (!password.matches(passRegex)) { passwordError = "6-8 chars: 1 Caps, 1 Num, 1 Special (@#$%), No spaces"; isValid = false } else passwordError = null
+        if (password != confirmPassword || confirmPassword.isEmpty()) { confirmPasswordError = "Passwords do not match"; isValid = false } else confirmPasswordError = null
         return isValid
+    }
+
+    // --- DIALOGS ---
+    if (showLocationOptionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showLocationOptionsDialog = false },
+            title = { Text("Choose Location Method") },
+            text = {
+                Column {
+                    TextButton(onClick = {
+                        showLocationOptionsDialog = false
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                            @SuppressLint("MissingPermission")
+                            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                                if (location != null) {
+                                    latitude = location.latitude.toString()
+                                    longitude = location.longitude.toString()
+                                    locationMessage = "GPS Location Saved ✅"
+                                }
+                            }
+                        } else {
+                            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                        }
+                    }) { Text("Use Current Location (GPS)") }
+
+                    TextButton(onClick = {
+                        showLocationOptionsDialog = false
+                        mapPickerLauncher.launch(Intent(context, OSMMapPickerActivity::class.java))
+                    }) { Text("Pick on Map") }
+
+                    TextButton(onClick = {
+                        showLocationOptionsDialog = false
+                        showManualLocationDialog = true
+                    }) { Text("Type Manually (Lat/Long)") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showLocationOptionsDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showManualLocationDialog) {
+        AlertDialog(
+            onDismissRequest = { showManualLocationDialog = false },
+            title = { Text("Enter Coordinates") },
+            text = {
+                Column {
+                    OutlinedTextField(value = manualLat, onValueChange = { manualLat = it }, label = { Text("Latitude") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(value = manualLon, onValueChange = { manualLon = it }, label = { Text("Longitude") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    latitude = manualLat
+                    longitude = manualLon
+                    locationMessage = "Manual Location Saved ✅"
+                    showManualLocationDialog = false
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showManualLocationDialog = false }) { Text("Cancel") } }
+        )
     }
 
     if (showSuccessDialog) {
@@ -152,22 +257,15 @@ fun SignupScreen(modifier: Modifier = Modifier) {
             confirmButton = {
                 TextButton(onClick = {
                     showSuccessDialog = false
-
                     coroutineScope.launch {
                         try {
                             val base64Image = stallImageUri?.let { uriToBase64(context, it) }
                             val request = OwnerStallRequest(
-                                fullName = fullName,
-                                email = email,
-                                phone = phone,
-                                passwordHash = password,
-                                role = "Owner",
-                                stallName = stallName,
-                                fssaiNumber = fssaiNumber,
-                                stallImageBase64 = base64Image
+                                fullName = fullName, email = email, phone = phone, passwordHash = password, role = "Owner",
+                                stallName = stallName, fssaiNumber = fssaiNumber, stallImageBase64 = base64Image,
+                                latitude = latitude, longitude = longitude
                             )
                             val response = RetrofitClient.instance.registerStall(request)
-
                             if (response.isSuccessful && response.body()?.status == "success") {
                                 Toast.makeText(context, "Owner Account Created!", Toast.LENGTH_SHORT).show()
                                 val intent = Intent(context, LoginActivity::class.java)
@@ -178,8 +276,7 @@ fun SignupScreen(modifier: Modifier = Modifier) {
                                 Toast.makeText(context, "Server Error: ${response.body()?.message}", Toast.LENGTH_LONG).show()
                             }
                         } catch (e: Exception) {
-                            android.util.Log.e("DialDishNetwork", "Signup failed: ", e)
-                            Toast.makeText(context, "Network Error! Is the PHP server running?", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "Network Error!", Toast.LENGTH_LONG).show()
                         }
                     }
                 }) { Text("Continue", color = MaterialTheme.colorScheme.primary) }
@@ -192,22 +289,16 @@ fun SignupScreen(modifier: Modifier = Modifier) {
             onDismissRequest = { showFailDialog = false },
             title = { Text("Verification Failed ❌") },
             text = { Text("Invalid FSSAI number. It must be exactly 14 digits. Owner login denied.") },
-            confirmButton = {
-                TextButton(onClick = { showFailDialog = false }) { Text("Try Again", color = Color.Red) }
-            }
+            confirmButton = { TextButton(onClick = { showFailDialog = false }) { Text("Try Again", color = Color.Red) } }
         )
     }
 
+    // --- MAIN UI ---
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp)
-            .verticalScroll(rememberScrollState()),
+        modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp).verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(16.dp))
-
         Text(text = "Create Account", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
         Text(text = "Join DialDish to get started", fontSize = 14.sp, color = Color.Gray, modifier = Modifier.padding(top = 8.dp, bottom = 24.dp))
 
@@ -232,21 +323,28 @@ fun SignupScreen(modifier: Modifier = Modifier) {
 
         if (selectedRole == "Owner") {
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFFFFF7ED))
-                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
-                    .padding(16.dp)
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFFFFF7ED)).border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)).padding(16.dp)
             ) {
                 Column {
                     Text(text = "STALL DETAILS", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.height(16.dp))
-
                     CustomTextField("STALL NAME", stallName, "e.g., Royal Biryani Hub", Icons.Filled.Store, stallNameError) { stallName = it }
                     Spacer(modifier = Modifier.height(16.dp))
-
                     CustomTextField("FSSAI NUMBER (14 Digits)", fssaiNumber, "Enter 14-digit FSSAI", Icons.Filled.VerifiedUser, null, KeyboardType.Number) { fssaiNumber = it }
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Location Button triggering Options
+                    Text(text = "STALL LOCATION", fontSize = 12.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { showLocationOptionsDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = if (latitude != null) Color(0xFF4CAF50) else Color.DarkGray),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.LocationOn, contentDescription = "Location", tint = Color.White)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = locationMessage, color = Color.White)
+                    }
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(text = "STALL PHOTO", fontSize = 12.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
@@ -257,7 +355,7 @@ fun SignupScreen(modifier: Modifier = Modifier) {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Filled.Image, contentDescription = "Upload", tint = Color.White)
-                        Spacer(modifier = Modifier.padding(4.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(text = if (stallImageUri != null) "Photo Selected ✅" else "Upload Stall Photo")
                     }
                 }
@@ -269,36 +367,23 @@ fun SignupScreen(modifier: Modifier = Modifier) {
             onClick = {
                 if (validateBaseInputs()) {
                     if (selectedRole == "Owner") {
-                        if (stallName.isBlank()) {
-                            stallNameError = "Stall Name is required"
-                            return@Button
-                        }
-                        stallNameError = null
-
-                        if (fssaiNumber.matches("^\\d{14}$".toRegex())) {
-                            showSuccessDialog = true
-                        } else {
-                            showFailDialog = true
-                        }
+                        if (stallName.isBlank()) { stallNameError = "Stall Name is required"; return@Button }
+                        if (latitude == null || longitude == null) { Toast.makeText(context, "Please set Stall Location.", Toast.LENGTH_LONG).show(); return@Button }
+                        if (fssaiNumber.matches("^\\d{14}$".toRegex())) { showSuccessDialog = true } else { showFailDialog = true }
                     } else {
                         coroutineScope.launch {
                             try {
                                 val request = UserSignupRequest(fullName, email, phone, password, "User", null)
                                 val response = RetrofitClient.instance.registerUser(request)
-
                                 if (response.isSuccessful && response.body()?.status == "success") {
                                     Toast.makeText(context, "User Account Created!", Toast.LENGTH_SHORT).show()
                                     val intent = Intent(context, LoginActivity::class.java)
                                     intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-                                    val options = android.app.ActivityOptions.makeCustomAnimation(context, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
-                                    context.startActivity(intent, options)
+                                    context.startActivity(intent)
                                 } else {
                                     Toast.makeText(context, "Server Error: ${response.body()?.message}", Toast.LENGTH_LONG).show()
                                 }
-                            } catch (e: Exception) {
-                                android.util.Log.e("DialDishNetwork", "Signup failed: ", e)
-                                Toast.makeText(context, "Network Error! Is the PHP server running?", Toast.LENGTH_LONG).show()
-                            }
+                            } catch (e: Exception) { Toast.makeText(context, "Network Error!", Toast.LENGTH_LONG).show() }
                         }
                     }
                 }
@@ -306,23 +391,16 @@ fun SignupScreen(modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxWidth().height(56.dp),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-        ) {
-            Text(text = "Sign Up", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
-        }
+        ) { Text(text = "Sign Up", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White) }
 
         Spacer(modifier = Modifier.height(24.dp))
-
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
             Text(text = "Already have an account? ", color = Color.Gray, fontSize = 14.sp)
-            Text(
-                text = "Login", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable {
-                    val intent = Intent(context, LoginActivity::class.java)
-                    intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    val options = android.app.ActivityOptions.makeCustomAnimation(context, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
-                    context.startActivity(intent, options)
-                }
-            )
+            Text(text = "Login", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable {
+                val intent = Intent(context, LoginActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                context.startActivity(intent)
+            })
         }
         Spacer(modifier = Modifier.height(24.dp))
     }
@@ -373,14 +451,12 @@ fun RoleSelectorButton(text: String, isSelected: Boolean, modifier: Modifier = M
         contentAlignment = Alignment.Center
     ) { Text(text = text, color = contentColor, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
 }
-// HELPER FUNCTION: Converts the selected Image into a Base64 String to send to Python
+
 fun uriToBase64(context: android.content.Context, uri: Uri): String? {
     return try {
         val bytes = context.contentResolver.openInputStream(uri)?.readBytes()
         android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
-    } catch (e: Exception) {
-        null
-    }
+    } catch (e: Exception) { null }
 }
 
 @Preview(showBackground = true)

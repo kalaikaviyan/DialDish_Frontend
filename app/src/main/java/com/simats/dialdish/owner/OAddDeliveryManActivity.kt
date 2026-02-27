@@ -96,7 +96,27 @@ fun AddDeliveryManScreen(modifier: Modifier = Modifier, onFinish: () -> Unit = {
     var prefixError by remember { mutableStateOf<String?>(null) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> photoUri = uri }
+    LaunchedEffect(ownerId) {
+        if (ownerId != -1) {
+            try {
+                val request = com.simats.dialdish.network.CheckPrefixRequest(ownerId)
+                val response = RetrofitClient.instance.checkPrefix(request)
 
+                if (response.isSuccessful && response.body()?.status == "success") {
+                    // STRICT CHECK: Ensure it's true AND the prefix actually contains text
+                    val returnedPrefix = response.body()?.prefix
+                    if (response.body()?.has_prefix == true && !returnedPrefix.isNullOrBlank()) {
+                        hasPrefix = true
+                        currentPrefix = returnedPrefix
+                    } else {
+                        hasPrefix = false
+                    }
+                }
+            } catch (e: Exception) {
+                // If network fails silently on load, it will just ask them manually. No crash!
+            }
+        }
+    }
     if (generatedStaffId != null) {
         AlertDialog(
             onDismissRequest = { },
@@ -129,7 +149,12 @@ fun AddDeliveryManScreen(modifier: Modifier = Modifier, onFinish: () -> Unit = {
                     Spacer(modifier = Modifier.height(16.dp))
                     OutlinedTextField(
                         value = newPrefix,
-                        onValueChange = { if (it.length <= 2) newPrefix = it.uppercase() },
+                        // Forces the string to always be UPPERCASE
+                        onValueChange = { input ->
+                            if (input.length <= 2) {
+                                newPrefix = input.uppercase()
+                            }
+                        },
                         label = { Text("2-Letter Code") },
                         isError = prefixError != null,
                         modifier = Modifier.fillMaxWidth()
