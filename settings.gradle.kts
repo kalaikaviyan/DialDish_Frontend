@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "dialdish"
+rootProject.name = "directdine"
 include(":app")
  

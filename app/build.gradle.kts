@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.simats.dialdish"
+    namespace = "com.simats.directdine"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.simats.dialdish"
+        applicationId = "com.simats.directdine"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
